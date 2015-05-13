@@ -1,0 +1,299 @@
+import org.osbot.rs07.api.filter.Filter;
+import org.osbot.rs07.api.model.GroundItem;
+import org.osbot.rs07.api.model.Item;
+import org.osbot.rs07.api.model.NPC;
+import org.osbot.rs07.api.ui.Skill;
+import org.osbot.rs07.script.Script;
+import org.osbot.rs07.script.ScriptManifest;
+import org.osbot.rs07.canvas.paint.Painter;
+
+import javax.swing.*;
+import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.ListSelectionListener;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+
+@ScriptManifest(name = "SimpleCombat", author = "Foulwerp", version = 1.2, info = "Combat", logo = "")
+public class SimpleCombat extends Script implements Painter {
+
+    private ArrayList alist = new ArrayList<String>();
+    private ArrayList plist = new ArrayList<String>();
+    private static final DecimalFormat k = new DecimalFormat("#.#");
+    private static final int[] skill = {0, 1, 2, 3, 4, 6};
+    private static final String[] skillNames = {"Attack", "Defence", "Strength", "HitPoints", "Range", "Magic"};
+    private static final Color[] skillColors = {new Color(145, 25, 25).brighter(), new Color(95, 115, 185),
+            Color.GREEN.darker(), Color.WHITE.darker(), new Color(70, 95, 20).brighter(), new Color(95, 115, 230)};
+
+    private long start;
+    private int[] startXP;
+
+    public void onStart() {
+        new PickUp();
+        new Attack();
+        start = System.currentTimeMillis();
+        startXP = new int[6];
+        for (int i = 0; i < skill.length; i++) {
+            startXP[i] = skills.getExperience(Skill.forId(skill[i]));
+        }
+    }
+
+    public int onLoop() {
+        Item food = inventory.getItem(new Filter<Item>() {
+            public boolean match(Item item) {
+                return item != null && Arrays.asList(item.getActions()).contains("Eat");
+            }
+        });
+        if (skills.getDynamic(Skill.HITPOINTS) < (skills.getStatic(Skill.HITPOINTS) / 2)) {
+            if (food != null) {
+                food.interact("Eat");
+                return random(500, 1000);
+            }
+            stop();
+        }
+        if (myPlayer().getInteracting() != null) {
+            return random(750, 1000);
+        }
+        if (!inventory.isFull()) {
+            if (myPlayer().isMoving()) {
+                return random(500, 1000);
+            }
+            GroundItem pickup = groundItems.closest(new Filter<GroundItem>() {
+                public boolean match(GroundItem groundItem) {
+                    return plist.contains(groundItem.getName().toLowerCase()) && map.canReach(groundItem);
+                }
+            });
+            if (pickup != null) {
+                if (!pickup.isOnScreen()) {
+                    camera.toEntity(pickup);
+                    if (!pickup.isOnScreen()) {
+                        getLocalWalker().walk(pickup);
+                        return random(500, 1000);
+                    }
+                }
+                pickup.interact("Take");
+                return random(750, 1000);
+            }
+        }
+        NPC interacting = npcs.closest(new Filter<NPC>() {
+            public boolean match(NPC npc) {
+                return npc.getInteracting() == myPlayer() && Arrays.asList(npc.getActions()).contains("Attack");
+            }
+        });
+        NPC npc = interacting != null ? interacting : npcs.closest(new Filter<NPC>() {
+            public boolean match(NPC npc) {
+                return alist.contains(npc.getName().toLowerCase()) && npc.getHealth() > 0 && npc.isAttackable() && map.canReach(npc);
+            }
+        });
+        if (npc == null) {
+            return random(500, 1000);
+        }
+        if (!npc.isOnScreen()) {
+            camera.toEntity(npc);
+            if (!npc.isOnScreen()) {
+                getLocalWalker().walk(npc);
+                return random(500, 1000);
+            }
+        }
+        npc.interact("Attack");
+        camera.toTop();
+        return random(750, 1000);
+    }
+
+    public void onPaint(Graphics2D g) {
+        int y = 25, z = 16, w = 3, x = 5;
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Point m = mouse.getPosition();
+        g.drawLine((int) m.getX() - 3, (int) m.getY(), (int) m.getX() + 3, (int) m.getY());
+        g.drawLine((int) m.getX(), (int) m.getY() - 3, (int) m.getX(), (int) m.getY() + 3);
+        g.setFont(new Font("Comic Sans MS", Font.PLAIN, 10));
+        g.setColor(Color.BLACK);
+        g.drawRect(w, 4, 200, 11);
+        g.setColor(new Color(0, 0, 0, 220));
+        g.fillRect(w, 4, 200, 11);
+        g.setColor(Color.WHITE);
+        g.drawString("SimpleCombat - Version 1.2", x, 12);
+        double eph;
+        int exp;
+        for (int i = 0; i < 6; i++) {
+            exp = (skills.getExperience(Skill.forId(skill[i])) - startXP[i]);
+            if (exp > 0) {
+                eph = (exp * 3600000D / (System.currentTimeMillis() - start));
+                g.setColor(Color.BLACK);
+                g.drawRect(w, z, 200, 11);
+                g.setColor(new Color(0, 0, 0, 220));
+                g.fillRect(w, z, 200, 11);
+                g.setColor(skillColors[i]);
+                g.drawString(skillNames[i] + ": " + k.format(exp / 1000D) + " K Earned - " + k.format(eph / 1000) + " K P/H", x, y);
+                y += 11;
+                z += 11;
+            }
+        }
+    }
+
+    class PickUp extends JFrame implements ActionListener, ListSelectionListener, KeyListener {
+
+        JButton added = new JButton("Add");
+        JButton start = new JButton("Done");
+        JTextField input = new JTextField("");
+        DefaultListModel model = new DefaultListModel();
+        JList list = new JList(model);
+        JScrollPane scroll = new JScrollPane(list);
+
+        public PickUp() {
+            setTitle("PickUp");
+            setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            setBounds(50, 50, 300, 210);
+            setLayout(new BorderLayout());
+            add(scroll, BorderLayout.PAGE_START);
+            add(input, BorderLayout.CENTER);
+            add(added, BorderLayout.LINE_END);
+            add(start, BorderLayout.PAGE_END);
+            added.addActionListener(this);
+            start.addActionListener(this);
+            input.addKeyListener(this);
+            list.addListSelectionListener(this);
+            setVisible(true);
+            setResizable(false);
+        }
+
+        public void actionPerformed(ActionEvent e) {
+            Object event = e.getSource();
+            if (event == added) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    if (!alist.contains(s)) {
+                        alist.add(s);
+                    }
+                }
+                input.setText("");
+            }
+            if (event == start) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    plist.add(s);
+                }
+                setVisible(false);
+            }
+        }
+
+        public void valueChanged(final ListSelectionEvent v) {
+            if (v.getSource() == list) {
+                String s = (String) list.getSelectedValue();
+                if (s == null || s.isEmpty()) {
+                    return;
+                }
+                model.removeElement(s);
+            }
+        }
+
+        public void keyTyped(KeyEvent e) {
+        }
+
+        public void keyPressed(KeyEvent e) {
+            int key = e.getKeyCode();
+            if (key == KeyEvent.VK_ENTER) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    if (!alist.contains(s)) {
+                        alist.add(s);
+                    }
+                }
+                input.setText("");
+            }
+        }
+
+        public void keyReleased(KeyEvent e) {
+        }
+    }
+
+    class Attack extends JFrame implements ActionListener, ListSelectionListener, KeyListener {
+
+        JButton added = new JButton("Add");
+        JButton start = new JButton("Done");
+        JTextField input = new JTextField("");
+        DefaultListModel model = new DefaultListModel();
+        JList list = new JList(model);
+        JScrollPane scroll = new JScrollPane(list);
+
+        public Attack() {
+            setTitle("Attack");
+            setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            setBounds(100, 100, 300, 210);
+            setLayout(new BorderLayout());
+            add(scroll, BorderLayout.PAGE_START);
+            add(input, BorderLayout.CENTER);
+            add(added, BorderLayout.LINE_END);
+            add(start, BorderLayout.PAGE_END);
+            added.addActionListener(this);
+            start.addActionListener(this);
+            input.addKeyListener(this);
+            list.addListSelectionListener(this);
+            setVisible(true);
+            setResizable(false);
+        }
+
+        public void actionPerformed(ActionEvent e) {
+            Object event = e.getSource();
+            if (event == added) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    if (!alist.contains(s)) {
+                        alist.add(s);
+                    }
+                }
+                input.setText("");
+            }
+            if (event == start) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    if (!alist.contains(s)) {
+                        alist.add(s);
+                    }
+                }
+                setVisible(false);
+            }
+        }
+
+        public void valueChanged(final ListSelectionEvent v) {
+            if (v.getSource() == list) {
+                String s = (String) list.getSelectedValue();
+                if (s == null || s.isEmpty()) {
+                    return;
+                }
+                model.removeElement(s);
+            }
+        }
+
+        public void keyTyped(KeyEvent e) {
+        }
+
+        public void keyPressed(KeyEvent e) {
+            int key = e.getKeyCode();
+            if (key == KeyEvent.VK_ENTER) {
+                model.addElement(input.getText());
+                for (int i = 0; i < model.getSize(); i++) {
+                    String s = model.get(i).toString().toLowerCase();
+                    if (!alist.contains(s)) {
+                        alist.add(s);
+                    }
+                }
+                input.setText("");
+            }
+        }
+
+        public void keyReleased(KeyEvent e) {
+        }
+    }
+}
